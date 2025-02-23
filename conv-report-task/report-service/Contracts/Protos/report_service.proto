@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package reports;
+
+option csharp_namespace = "Reports.Service";
+
+service ReportService {
+  rpc GetReport(GetReportRequest) returns (GetReportsResponse);
+}
+
+message ReportId {
+  string guid = 1;
+}
+
+message ReportProto {
+  double ratio_views_payments = 1;
+  int32 payment_count = 2;
+}
+
+message GetReportRequest {
+  ReportId id = 1;
+}
+
+message GetReportsResponse {
+  ReportProto report = 1;
+}

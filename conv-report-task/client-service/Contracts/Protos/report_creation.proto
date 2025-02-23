@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package reports;
+
+option csharp_namespace = "Reports.Kafka.Contracts";
+
+import "google/protobuf/timestamp.proto";
+
+message ReportCreationKey {
+
+  message ReportId {
+    string guid = 1;
+  }
+
+  ReportId report_id = 1;
+}
+
+message ReportCreationValue {
+  google.protobuf.Timestamp start_period = 1;
+  google.protobuf.Timestamp end_period = 2;
+  int64 product_id = 3;
+}

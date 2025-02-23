@@ -1,0 +1,155 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: report-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  outbox-postgres:
+    image: postgres:latest
+    container_name: report-outbox-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+    volumes:
+      - outbox-postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  redis:
+    image: redis
+    restart: always
+    container_name: local-redis
+    ports:
+      - "16379:6379"
+    networks:
+      - app-network
+
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    container_name: report-zookeeper
+    restart: unless-stopped
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+    ports:
+      - "2181:2181"
+    networks:
+      - app-network
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    container_name: report-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_LOG_DIRS: /kafka-data
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENERS: EXTERNAL://:9092,INTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:8001,INTERNAL://kafka:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      KAFKA_CREATE_TOPICS: "report_creation:1:1"
+    depends_on:
+      - zookeeper
+    volumes:
+      - kafka-data:/kafka-data
+    ports:
+      - "8001:9092"
+    healthcheck:
+      test: [
+        "CMD",
+        "kafka-topics.sh",
+        "--bootstrap-server", "localhost:9094",
+        "--list"
+      ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: report-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    ports:
+      - "8003:8080"
+    volumes:
+      - ./report-service/Contracts/Protos:/schemas
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "kafka"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9094"
+      KAFKA_CLUSTERS_0_DEFAULTKEYSERDE: "ProtobufFile"
+      KAFKA_CLUSTERS_0_DEFAULTVALUESERDE: "ProtobufFile"
+      KAFKA_CLUSTERS_0_SERDE_0_NAME: "ProtobufFile"
+      KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_PROTOBUFFILESDIR: "/schemas/"
+      KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_PROTOBUFMESSAGENAMEBYTOPIC_REPORT_CREATION: "reports.ReportCreationValue"
+      KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_PROTOBUFMESSAGENAMEBYTOPIC_REPORT_CREATION_KEY: "reports.ReportCreationKey"
+    networks:
+      - app-network
+
+  client-service:
+    image: client-service
+    build:
+      context: .
+      dockerfile: client-service/Presentation/Dockerfile
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      outbox-postgres:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      report-service:
+        condition: service_started
+    networks:
+      - app-network
+
+  report-service:
+    image: report-service
+    build:
+      context: .
+      dockerfile: report-service/Presentation/Dockerfile
+    ports:
+      - "5068:5068"
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_URLS=http://+:5068
+      - ASPNETCORE_HTTP2=1
+      - DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP2UNENCRYPTEDSUPPORT=true
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    networks:
+      - app-network
+        
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  outbox-postgres-data:
+  kafka-data:
